@@ -5,7 +5,7 @@
 //  Created by Alexandr Filovets on 23.10.24.
 //
 
-import Foundation
+import UIKit
 
 // MARK: Response model
 
@@ -21,4 +21,12 @@ struct PhotoTypeResponse: Codable {
     let totalPages: Int
     let totalElements: Int
     let content: [PhotoType]
+}
+
+// MARK: - POST model
+
+struct PhotoUploadData {
+    let name: String
+    let photo: UIImage
+    let typeId: Int
 }

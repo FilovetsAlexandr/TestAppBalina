@@ -6,110 +6,103 @@
 //
 
 import SwiftUI
-import AVFoundation
 
 struct MainView: View {
     @StateObject private var viewModel = MainViewModel()
-    @State private var showCamera = false // Для отображения камеры
-    @State private var cameraAccessDenied = false // Флаг для проверки доступа к камере
-
+    @State private var selectedPhotoTypeId: Int? = nil // Для хранения выбранного typeId
+    
     var body: some View {
         NavigationView {
-            List {
-                // Разбиваем элементы по страницам и убираем пустые секции
-                ForEach(1...viewModel.currentPage, id: \.self) { page in
-                    let pageData = viewModel.photoTypesForPage(page: page)
-                    if !pageData.isEmpty {
-                        Section(header: Text("Page \(page)")) {
-                            ForEach(pageData) { photoType in
-                                HStack {
-                                    if let imageUrlString = photoType.image, let imageUrl = URL(string: imageUrlString) {
-                                        AsyncImage(url: imageUrl) { image in
-                                            image.resizable().aspectRatio(contentMode: .fit)
-                                        } placeholder: {
-                                            ProgressView()
-                                        }
-                                        .frame(width: 50, height: 50)
-                                    } else {
-                                        // Показываем placeholder, если image = null или некорректный URL
-                                        Image(systemName: "photo")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 50, height: 50)
-                                            .foregroundColor(.gray)
+            VStack {
+                if viewModel.isUploading {
+                    VStack {
+                        Text("Uploading photo...")
+                        if let resultMessage = viewModel.uploadResultMessage {
+                            Text(resultMessage)
+                                .foregroundColor(resultMessage.contains("Error") ? .red : .green)
+                                .padding()
+                                .onAppear {
+                                    // Скрываем сообщение через 2 секунды
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        viewModel.uploadResultMessage = nil
                                     }
-                                    
-                                    Text(photoType.name)
-                                        .onTapGesture {
-                                            checkCameraPermission() // При нажатии на элемент проверяем разрешение и открываем камеру
-                                        }
                                 }
-                            }
                         }
                     }
+                    .padding()
+                } else if let resultMessage = viewModel.uploadResultMessage {
+                    Text(resultMessage)
+                        .foregroundColor(resultMessage.contains("Error") ? .red : .green)
+                        .padding()
+                        .hidden()
                 }
                 
-                // Прогресс-индикатор для подгрузки данных внизу
-                if viewModel.isLoading {
-                    ProgressView()
-                } else if !viewModel.isLastPage {
-                    Text("Load more...")
-                        .onAppear {
-                            viewModel.loadData()
+                List {
+                    // Отображаем все элементы, которые были загружены
+                    ForEach(viewModel.photoTypes) { photoType in
+                        HStack {
+                            if let imageUrlString = photoType.image, let imageUrl = URL(string: imageUrlString) {
+                                AsyncImage(url: imageUrl) { image in
+                                    image.resizable().aspectRatio(contentMode: .fit)
+                                } placeholder: {
+                                    ProgressView()
+                                }
+                                .frame(width: 50, height: 50)
+                            } else {
+                                // Показываем placeholder, если image = null или некорректный URL
+                                Image(systemName: "photo")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 50, height: 50)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Text(photoType.name)
+                                .onTapGesture {
+                                    selectedPhotoTypeId = photoType.id // Сохраняем ID выбранного элемента
+                                    viewModel.checkCameraPermission() // Проверяем разрешение на использование камеры
+                                }
                         }
+                    }
+                    
+                    if viewModel.isLoading {
+                        ProgressView()
+                    } else if !viewModel.isLastPage {
+                        Text("Load more...")
+                            .onAppear {
+                                viewModel.loadData() // Подгружаем данные
+                            }
+                    }
                 }
             }
             .navigationTitle("Photo Types Balinasoft")
             .onAppear {
-                viewModel.loadData()
+                viewModel.loadData() // Загружаем данные при первом появлении
             }
-            .sheet(isPresented: $showCamera) {
-                CameraView() // Показываем камеру
+            .sheet(isPresented: $viewModel.showCamera) {
+                CameraView(image: $viewModel.capturedImage) // Передаем capturedImage через Binding
+                    .onDisappear {
+                        if let image = viewModel.capturedImage {
+                            print("Изображение захвачено: \(image)") // Если изображение захвачено
+                        } else {
+                            print("Изображение не захвачено") // Если изображение не захвачено
+                        }
+
+                        if let selectedId = selectedPhotoTypeId {
+                            print("Идентификатор выбранного элемента: \(selectedId)") // Принт для отладки ID
+                            viewModel.uploadPhoto(typeId: selectedId, name: "Filovets Alexandr Vladimirovich")
+                        } else {
+                            print("Не выбран элемент для загрузки") // Принт для отладки ID
+                        }
+                    }
             }
-            .alert(isPresented: $cameraAccessDenied) {
-                Alert(
-                    title: Text("Camera Access Denied"),
-                    message: Text("Please enable camera access in Settings."),
-                    dismissButton: .default(Text("OK"))
-                )
+            .alert(isPresented: $viewModel.cameraAccessDenied) {
+                Alert(title: Text("Camera Access Denied"), message: Text("Please enable camera access in Settings."), dismissButton: .default(Text("OK")))
             }
             // Добавляем pull-to-refresh
             .refreshable {
-                await simulateDataLoad()
+                await viewModel.simulateDataLoad() // Используем метод для обновления данных
             }
         }
-    }
-
-    // Проверка разрешения на использование камеры
-    private func checkCameraPermission() {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized:
-            // Камера разрешена
-            showCamera = true
-        case .notDetermined:
-            // Запрос на разрешение
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                if granted {
-                    DispatchQueue.main.async {
-                        showCamera = true
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        cameraAccessDenied = true
-                    }
-                }
-            }
-        case .denied, .restricted:
-            // Камера запрещена
-            cameraAccessDenied = true
-        @unknown default:
-            break
-        }
-    }
-
-    // Симуляция секундной загрузки данных для pull-to-refresh
-    private func simulateDataLoad() async {
-        await Task.sleep(1 * 1_000_000_000) // 1 секунда задержки
-        viewModel.loadData()
     }
 }
